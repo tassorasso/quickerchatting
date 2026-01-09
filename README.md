@@ -23,3 +23,11 @@ uses p2p to connect
 5. Press "Host Party"
 
 ![the start screen](image.png)
+
+# note
+
+!! the default ip thats put is your **LOCAL** ip which people can **NOT** connect to, only people connected to your wifi !!
+
+you gotta put ur actual public ip at the start and port forward a port like 25565 and then friend connects using ur ip and port
+[tutorial how to port forward](https://www.youtube.com/watch?v=NTLDsEuQlYc)
+[website to get your IPv6/IPv4 IP](https://whatismyipaddress.com/)
