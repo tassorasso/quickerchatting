@@ -15,7 +15,7 @@ uses p2p to connect
 4. Enter the Port
 5. Press "Host Party"
 
-# how to make a private Party
+# how to make a public Party
 1. Enter a display name at the start screen
 3. Enter the Host IP at the start screen
 4. Enter the Port
