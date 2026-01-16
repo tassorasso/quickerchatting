@@ -1,20 +1,14 @@
 @echo off
-setlocal enabledelayedexpansion
+echo building
 
-if not exist "bin" mkdir bin
+if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
 
-echo [i] compiling
+python -m PyInstaller --noconsole --onefile --clean ^
+ --add-binary "backend.dll;." ^
+ --name "QuickerChatting" ^
+ chat.py
 
-g++ -O2 src/main.cpp src/globals.cpp src/utils.cpp src/ui.cpp src/network.cpp ^
-    -Isrc ^
-    -lws2_32 -lcomctl32 -lshell32 -lurlmon -lgdi32 -lcomdlg32 -lole32 ^
-    -mwindows ^
-    -o bin/chat.exe
-
-if %errorlevel% equ 0 (
-    echo [!] done
-) else (
-    echo [X] error code %errorlevel%
-)
-
+echo.
+echo build done
 pause
