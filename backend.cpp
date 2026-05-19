@@ -30,7 +30,8 @@ string last_msg = "";
 
 void add_event(string t, string d) {
     lock_guard<mutex> k(ev_mtx);
-    events.push({t, d});
+    if (events.size() < 1000)
+        events.push({t, d});
 }
 
 void broadcast(string msg, SOCKET ignore) {
@@ -58,7 +59,9 @@ void handle_client(Client* c) {
         if (r <= 0) break;
         buf[r] = 0;
         string msg = buf;
-        
+
+        if (msg.find("<<") != string::npos) continue;
+
         broadcast(c->name + ": " + msg, c->s);
         string echo = "<<ECHO>>" + msg;
         send(c->s, echo.c_str(), echo.length(), 0);
@@ -79,10 +82,17 @@ void host_loop(SOCKET listener) {
         int sz = sizeof(a);
         SOCKET s = accept(listener, (sockaddr*)&a, &sz);
         if (s == INVALID_SOCKET) continue;
+
+        {
+            lock_guard<mutex> k(mtx);
+            if (clients.size() >= 20) { closesocket(s); continue; }
+        }
+
         char b[4096];
-        send(s, "OK", 2, 0); 
-        int len = recv(s, b, 4096, 0);
-        string n = (len > 0) ? string(b, len) : "Guest";
+        send(s, "OK", 2, 0);
+        int len = recv(s, b, 4095, 0);
+        if (len > 0) b[len] = 0; else b[0] = 0;
+        string n = (len > 0) ? string(b, min(len, 64)) : "Guest";
         Client* c = new Client{s, n};
         mtx.lock();
         clients.push_back(c);
@@ -156,7 +166,8 @@ extern "C" {
         lock_guard<mutex> k(ev_mtx);
         if (events.empty()) return 0;
         auto e = events.front(); events.pop();
-        strcpy(t, e.first.c_str()); strcpy(d, e.second.c_str());
+        strncpy(t, e.first.c_str(), 63); t[63] = 0;
+        strncpy(d, e.second.c_str(), 1024*1024 - 1); d[1024*1024 - 1] = 0;
         return 1;
     }
     

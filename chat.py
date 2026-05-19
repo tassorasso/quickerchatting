@@ -2,15 +2,48 @@ import sys
 import ctypes
 import os
 import keyboard
-import uuid
-import base64
+import html as _html
+
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    import base64 as _b64
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
+
+_cipher = None
+
+def set_cipher(password):
+    global _cipher
+    if not CRYPTO_AVAILABLE or not password:
+        _cipher = None
+        return
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32,
+                     salt=b'QuickerChattingSalt2024', iterations=100000)
+    _cipher = Fernet(_b64.urlsafe_b64encode(kdf.derive(password.encode())))
+
+def encrypt_text(msg):
+    if _cipher is None:
+        return msg
+    return _cipher.encrypt(msg.encode()).decode()
+
+def decrypt_text(token):
+    if _cipher is None:
+        return token
+    try:
+        return _cipher.decrypt(token.encode()).decode()
+    except Exception:
+        return '[encrypted - wrong password?]'
+
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QTextEdit, QLabel, QPushButton, QListWidget, 
                              QCheckBox, QDialog, QColorDialog, QFontComboBox, QSpinBox,
                              QGroupBox, QGridLayout, QTabWidget, QKeySequenceEdit, QFrame,
-                             QListWidgetItem, QComboBox, QFileDialog, QTextBrowser)
-from PySide6.QtCore import Qt, QTimer, QEvent, Signal, QSize, QBuffer, QByteArray, QIODevice, QUrl
-from PySide6.QtGui import QKeySequence, QIcon, QPixmap, QImage, QDesktopServices
+                             QListWidgetItem, QComboBox, QTextBrowser)
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal, QSize
+from PySide6.QtGui import QKeySequence, QIcon
 
 if hasattr(sys, '_MEIPASS'):
     base_path = sys._MEIPASS
@@ -262,13 +295,9 @@ class ChatWindow(QWidget):
         self.font_family = "Segoe UI"
         self.font_size = 11
 
-        self.key_focus_chat = "insert" 
+        self.key_focus_chat = "insert"
         self.my_icon = "orange"
-        
-        self.img_buffer = None
-        self.img_sender_name = ""
-        self.image_map = {}
-        
+
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowSystemMenuHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         
@@ -294,8 +323,12 @@ class ChatWindow(QWidget):
         self.btn_close.setStyleSheet("background-color: #cc0000; border: none; color: white; font-weight: bold;")
         self.btn_close.clicked.connect(self.close_app)
         
+        self.lbl_enc_status = QLabel("OPEN")
+        self.lbl_enc_status.setStyleSheet("color: #ffaa00; background: transparent; border: none; font-size: 9pt; font-weight: bold;")
+
         self.header_layout.addWidget(self.lbl_title)
         self.header_layout.addStretch()
+        self.header_layout.addWidget(self.lbl_enc_status)
         self.header_layout.addWidget(self.btn_sets)
         self.header_layout.addWidget(self.btn_close)
         
@@ -325,13 +358,24 @@ class ChatWindow(QWidget):
         self.conn_box.addWidget(self.btn_join)
         self.body_layout.addLayout(self.conn_box)
 
+        self.pass_row = QHBoxLayout()
+        self.lbl_enc = QLabel("Key:")
+        self.lbl_enc.setFixedWidth(30)
+        self.lbl_enc.setStyleSheet("color: white; background: transparent;")
+        self.ent_pass = QLineEdit()
+        self.ent_pass.setPlaceholderText("Encryption password. both sides must match (optional)")
+        self.ent_pass.setEchoMode(QLineEdit.Password)
+        self.ent_pass.setStyleSheet(style_input)
+        self.pass_row.addWidget(self.lbl_enc)
+        self.pass_row.addWidget(self.ent_pass)
+        self.body_layout.addLayout(self.pass_row)
+
         self.chat_area = QHBoxLayout()
         self.txt_chat = QTextBrowser()
         self.txt_chat.setReadOnly(True)
         self.txt_chat.setOpenExternalLinks(False)
         self.txt_chat.setOpenLinks(False)
-        self.txt_chat.setFocusPolicy(Qt.NoFocus) 
-        self.txt_chat.anchorClicked.connect(self.handle_anchor)
+        self.txt_chat.setFocusPolicy(Qt.NoFocus)
         
         self.lst_users = QListWidget()
         self.lst_users.setFixedWidth(130)
@@ -347,13 +391,7 @@ class ChatWindow(QWidget):
         self.ent_msg.setStyleSheet(style_input)
         self.ent_msg.returnPressed.connect(self.send_msg)
         
-        self.btn_img = QPushButton("Img")
-        self.btn_img.setFixedWidth(40)
-        self.btn_img.setStyleSheet(btn_style)
-        self.btn_img.clicked.connect(self.send_image)
-        
         self.input_layout.addWidget(self.ent_msg)
-        self.input_layout.addWidget(self.btn_img)
         self.body_layout.addLayout(self.input_layout)
 
         self.main_layout.addWidget(self.frame_header)
@@ -374,25 +412,6 @@ class ChatWindow(QWidget):
         self.focus_timer.start(100) 
 
         self.old_pos = None
-
-    def handle_anchor(self, url):
-        scheme = url.scheme()
-        if scheme == "saveimg":
-            img_id = url.path()
-            if img_id in self.image_map:
-                base64_data = self.image_map[img_id]
-                try:
-                    data = base64.b64decode(base64_data)
-                    pix = QPixmap()
-                    pix.loadFromData(data)
-                    
-                    file_path, _ = QFileDialog.getSaveFileName(self, "Save Image", "", "Images (*.jpg *.png)")
-                    if file_path:
-                        pix.save(file_path)
-                except Exception as e:
-                    print(f"Error saving image: {e}")
-        else:
-            QDesktopServices.openUrl(url)
 
     def update_hotkey(self):
         try:
@@ -491,10 +510,12 @@ class ChatWindow(QWidget):
             for i in range(self.conn_box.count()):
                 w = self.conn_box.itemAt(i).widget()
                 if w: w.show()
+            self.lbl_enc.show()
+            self.ent_pass.show()
             self.btn_sets.show()
             self.btn_close.show()
             self.lbl_title.show()
-            self.btn_img.show()
+            self.lbl_enc_status.show()
         else:
             header_style = "background: transparent; border: none;"
             body_style = "background: transparent; border: none;"
@@ -504,10 +525,12 @@ class ChatWindow(QWidget):
             for i in range(self.conn_box.count()):
                 w = self.conn_box.itemAt(i).widget()
                 if w: w.hide()
+            self.lbl_enc.hide()
+            self.ent_pass.hide()
             self.btn_sets.hide()
             self.btn_close.hide()
             self.lbl_title.hide()
-            self.btn_img.hide()
+            self.lbl_enc_status.hide()
 
         self.frame_header.setStyleSheet(header_style)
         self.frame_body.setStyleSheet(body_style)
@@ -532,36 +555,37 @@ class ChatWindow(QWidget):
         self.txt_chat.setStyleSheet(chat_qss)
         self.lst_users.setStyleSheet(list_qss)
 
+    def _sanitized_name(self):
+        name = self.ent_name.text().strip()
+        name = ''.join(c for c in name if c not in '|<>&"')
+        return (name[:32] or "User")
+
+    def _update_enc_indicator(self):
+        if _cipher is not None:
+            self.lbl_enc_status.setText("ENC")
+            self.lbl_enc_status.setStyleSheet("color: #44ff44; background: transparent; border: none; font-size: 9pt; font-weight: bold;")
+        else:
+            self.lbl_enc_status.setText("OPEN")
+            self.lbl_enc_status.setStyleSheet("color: #ffaa00; background: transparent; border: none; font-size: 9pt; font-weight: bold;")
+
     def do_host(self):
-        full_name = f"{self.ent_name.text()}|{self.my_icon}"
+        set_cipher(self.ent_pass.text())
+        self._update_enc_indicator()
+        full_name = f"{self._sanitized_name()}|{self.my_icon}"
         lib.start_host(int(self.ent_port.text()), full_name.encode())
-    
+
     def do_join(self):
-        full_name = f"{self.ent_name.text()}|{self.my_icon}"
+        set_cipher(self.ent_pass.text())
+        self._update_enc_indicator()
+        full_name = f"{self._sanitized_name()}|{self.my_icon}"
         lib.start_join(self.ent_ip.text().encode(), int(self.ent_port.text()), full_name.encode())
 
     def send_msg(self):
         t = self.ent_msg.text()
         if t:
-            lib.send_msg(t.encode())
+            lib.send_msg(encrypt_text(t).encode())
             self.ent_msg.clear()
             
-    def send_image(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp)")
-        if file_name:
-            pix = QPixmap(file_name)
-            if not pix.isNull():
-                pix = pix.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                
-                ba = QByteArray()
-                buf = QBuffer(ba)
-                buf.open(QIODevice.WriteOnly)
-                pix.save(buf, "JPG", 70) 
-                hex_data = ba.toBase64().data().decode()
-                
-                msg = f"[IMG]{hex_data}[/IMG]"
-                lib.send_msg(msg.encode())
-
     def poll_backend(self):
         t = ctypes.create_string_buffer(64)
         d = ctypes.create_string_buffer(1024 * 1024) 
@@ -574,10 +598,10 @@ class ChatWindow(QWidget):
             except Exception:
                 continue
 
-            if kind == "CHAT": 
+            if kind == "CHAT":
                 self.append_chat_msg(val)
-            elif kind == "SYS": 
-                self.txt_chat.append(f"<div style='color:orange; font-family:{self.font_family}; font-size:{self.font_size}pt;'>[SYS] {val}</div>")
+            elif kind == "SYS":
+                self.txt_chat.append(f"<div style='color:orange; font-family:{self.font_family}; font-size:{self.font_size}pt;'>[SYS] {_html.escape(val)}</div>")
             elif kind == "USERS":
                 self.lst_users.clear()
                 users = val.split(',')
@@ -593,91 +617,27 @@ class ChatWindow(QWidget):
                     if os.path.exists(ic_path):
                         item.setIcon(QIcon(ic_path))
                     self.lst_users.addItem(item)
-            elif kind == "ERR": 
-                self.txt_chat.append(f"<div style='color:red; font-family:{self.font_family}; font-size:{self.font_size}pt;'>ERROR: {val}</div>")
+            elif kind == "ERR":
+                self.txt_chat.append(f"<div style='color:red; font-family:{self.font_family}; font-size:{self.font_size}pt;'>ERROR: {_html.escape(val)}</div>")
             count += 1
             
     def append_chat_msg(self, raw_msg):
-        if self.img_buffer is not None:
-            prefix = f"{self.img_sender_name}: "
-            chunk_to_add = raw_msg
-            
-            if raw_msg.startswith(prefix):
-                chunk_to_add = raw_msg[len(prefix):]
-            elif raw_msg.startswith(self.img_sender_name + "|"):
-                parts = raw_msg.split(": ", 1)
-                if len(parts) > 1 and parts[0].startswith(self.img_sender_name):
-                    chunk_to_add = parts[1]
-
-            self.img_buffer += chunk_to_add
-            if "[/IMG]" in self.img_buffer:
-                self.process_finished_image()
-            return
-
-        if "[IMG]" in raw_msg:
-            sender = "??"
-            content = raw_msg
-            
-            if ": " in raw_msg:
-                parts = raw_msg.split(": ", 1)
-                sender_info = parts[0]
-                content = parts[1]
-                
-                if "|" in sender_info:
-                    sender = sender_info.split("|")[0]
-                else:
-                    sender = sender_info
-            
-            self.img_sender_name = sender
-            self.img_buffer = content
-            
-            if "[/IMG]" in self.img_buffer:
-                self.process_finished_image()
-            return
-
         if ": " in raw_msg:
             sender_info, msg = raw_msg.split(": ", 1)
-            
+
             if "|" in sender_info:
                 name = sender_info.split("|")[0]
             else:
                 name = sender_info
-                
-            col_name = self.col_me if name == self.ent_name.text() else self.col_friend
-            html = (f"<div style='font-family:{self.font_family}; font-size:{self.font_size}pt; margin-bottom:2px;'>"
-                    f"<span style='color:{col_name}; font-weight:bold;'>{name}:</span> "
-                    f"<span style='color:{self.col_text};'>{msg}</span></div>")
-            self.txt_chat.append(html)
-        else:
-            self.txt_chat.append(f"<div style='color:{self.col_text}; font-family:{self.font_family}; font-size:{self.font_size}pt;'>{raw_msg}</div>")
 
-    def process_finished_image(self):
-        try:
-            start = self.img_buffer.find("[IMG]") + 5
-            end = self.img_buffer.find("[/IMG]")
-            
-            if start != -1 and end != -1:
-                base64_img = self.img_buffer[start:end]
-                base64_img = base64_img.replace("\n", "").replace("\r", "").replace(" ", "")
-                
-                img_id = str(uuid.uuid4())
-                self.image_map[img_id] = base64_img
-                
-                name = self.img_sender_name
-                col_name = self.col_me if name == self.ent_name.text() else self.col_friend
-                
-                html = (f"<div style='font-family:{self.font_family}; font-size:{self.font_size}pt; margin-bottom:2px;'>"
-                        f"<span style='color:{col_name}; font-weight:bold;'>{name}:</span> "
-                        f"<a href='saveimg:{img_id}' style='color:lightgreen; text-decoration:none;'>[Save]</a><br>"
-                        f"<img src='data:image/jpeg;base64,{base64_img}'></div>")
-                self.txt_chat.append(html)
-            else:
-                 self.txt_chat.append("<div style='color:red;'>[Error: Incomplete Image Data]</div>")
-        except Exception:
-            self.txt_chat.append("<div style='color:red;'>[Error displaying image]</div>")
-        
-        self.img_buffer = None
-        self.img_sender_name = ""
+            msg = decrypt_text(msg)
+            col_name = self.col_me if name == self.ent_name.text() else self.col_friend
+            html_str = (f"<div style='font-family:{self.font_family}; font-size:{self.font_size}pt; margin-bottom:2px;'>"
+                        f"<span style='color:{col_name}; font-weight:bold;'>{_html.escape(name)}:</span> "
+                        f"<span style='color:{self.col_text};'>{_html.escape(msg)}</span></div>")
+            self.txt_chat.append(html_str)
+        else:
+            self.txt_chat.append(f"<div style='color:{self.col_text}; font-family:{self.font_family}; font-size:{self.font_size}pt;'>{_html.escape(raw_msg)}</div>")
 
     def open_settings(self):
         self.settings_open = True
@@ -699,6 +659,9 @@ class ChatWindow(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    icon_path = os.path.join(base_path, "drawing.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     win = ChatWindow()
     win.setObjectName("ChatWindow")
     win.show()
