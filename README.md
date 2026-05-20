@@ -40,6 +40,12 @@ Press **Insert** to bring the chat window into focus. You can change this in the
 
 ---
 
+# Demonstration
+
+<video src="demo.mp4" controls width="600"></video>
+
+---
+
 ## Requirements
 
 **Python 3.11+**
