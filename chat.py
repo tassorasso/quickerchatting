@@ -428,20 +428,22 @@ class ChatWindow(QWidget):
     def force_focus(self):
         hwnd = int(self.winId())
         foreground_hwnd = user32.GetForegroundWindow()
-        
+        self._prev_hwnd = foreground_hwnd
+
         current_thread_id = kernel32.GetCurrentThreadId()
         foreground_thread_id = user32.GetWindowThreadProcessId(foreground_hwnd, None)
-        
+
         if current_thread_id != foreground_thread_id:
             user32.AttachThreadInput(foreground_thread_id, current_thread_id, True)
             user32.BringWindowToTop(hwnd)
             user32.ShowWindow(hwnd, SW_RESTORE)
             user32.AttachThreadInput(foreground_thread_id, current_thread_id, False)
-        
+
+        self.is_focused = True
+        self.update_style(True)
         self.activateWindow()
         self.raise_()
-        self.ent_msg.setFocus()
-        self.ent_msg.selectAll()
+        QTimer.singleShot(0, self.ent_msg.setFocus)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -585,6 +587,9 @@ class ChatWindow(QWidget):
         if t:
             lib.send_msg(encrypt_text(t).encode())
             self.ent_msg.clear()
+            prev = getattr(self, '_prev_hwnd', None)
+            if prev:
+                user32.SetForegroundWindow(prev)
             
     def poll_backend(self):
         t = ctypes.create_string_buffer(64)

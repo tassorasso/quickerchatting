@@ -5,7 +5,7 @@ a = Analysis(
     ['chat.py'],
     pathex=[],
     binaries=[('backend.dll', '.')],
-    datas=[('drawing.ico', '.')],
+    datas=[('drawing.ico', '.'), ('icos', 'icos')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
