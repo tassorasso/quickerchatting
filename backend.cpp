@@ -7,12 +7,20 @@
 #include <mutex>
 #include <queue>
 #include <algorithm>
+#include <chrono>
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
-struct Client { SOCKET s; string name; };
+using clk = chrono::steady_clock;
+
+struct Client {
+    SOCKET s;
+    string name;
+    int msg_count = 0;
+    clk::time_point window_start = clk::now();
+};
 
 SOCKET g_sock = INVALID_SOCKET;
 bool running = false;
@@ -61,6 +69,12 @@ void handle_client(Client* c) {
         string msg = buf;
 
         if (msg.find("<<") != string::npos) continue;
+
+        // Rate limit: max 10 messages per second per client
+        auto now = clk::now();
+        auto ms = chrono::duration_cast<chrono::milliseconds>(now - c->window_start).count();
+        if (ms >= 1000) { c->window_start = now; c->msg_count = 0; }
+        if (++c->msg_count > 10) continue;
 
         broadcast(c->name + ": " + msg, c->s);
         string echo = "<<ECHO>>" + msg;
